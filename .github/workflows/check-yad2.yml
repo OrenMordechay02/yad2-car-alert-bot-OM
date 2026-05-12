@@ -2,7 +2,8 @@ name: Check Yad2 Listings
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Every 30 min, 05:00–21:30 UTC = ~07:00–00:00 Israel time (UTC+2/+3)
+    - cron: "0,30 5-21 * * *"
   workflow_dispatch:
 
 jobs:
