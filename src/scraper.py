@@ -90,24 +90,37 @@ def _search_url_to_params(search_url: str) -> dict:
     return {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
 
+def _str(val: object) -> str:
+    """Extract a plain string from a value that may be a str, int, or dict."""
+    if val is None:
+        return ""
+    if isinstance(val, dict):
+        # Yad2 uses {"text": "...", "value": ...} or {"name": "..."}
+        return str(val.get("text") or val.get("name") or val.get("value") or "")
+    return str(val)
+
+
 def _parse_listing(item: dict) -> Listing | None:
     listing_id = str(item.get("id") or item.get("orderId") or item.get("order_id") or "")
     if not listing_id:
         return None
 
-    # title
     title_parts = [
-        item.get("manufacturer_he") or item.get("manufacturer") or item.get("manufacturerHe") or "",
-        item.get("model_he") or item.get("model") or item.get("modelHe") or "",
-        item.get("sub_model_he") or item.get("subModel") or item.get("subModelHe") or "",
+        _str(item.get("manufacturer_he") or item.get("manufacturer") or item.get("manufacturerHe")),
+        _str(item.get("model_he") or item.get("model") or item.get("modelHe")),
+        _str(item.get("sub_model_he") or item.get("subModel") or item.get("subModelHe")),
     ]
-    title = " ".join(p for p in title_parts if p).strip() or item.get("title", "")
+    title = " ".join(p for p in title_parts if p).strip() or _str(item.get("title"))
 
-    price = str(item.get("price") or item.get("price_n") or "")
-    year = str(item.get("year") or item.get("manufactureYear") or "")
-    km = str(item.get("km") or item.get("kilometers") or "")
-    hand = str(item.get("hand") or item.get("handNum") or "")
-    location = item.get("area_text") or item.get("city_text") or item.get("cityText") or item.get("areaText") or ""
+    price = _str(item.get("price") or item.get("price_n") or item.get("priceOnly"))
+    year = _str(item.get("year") or item.get("manufactureYear"))
+    km = _str(item.get("km") or item.get("kilometers"))
+    hand = _str(item.get("hand") or item.get("handNum"))
+    location = _str(
+        item.get("area_text") or item.get("city_text")
+        or item.get("cityText") or item.get("areaText")
+        or item.get("city") or item.get("area")
+    )
 
     slug = item.get("link") or item.get("adNumber") or listing_id
     url = f"https://www.yad2.co.il/vehicles/private-cars/{slug}"
@@ -118,44 +131,56 @@ def _parse_listing(item: dict) -> Listing | None:
     )
 
 
-def _looks_like_listing(item: dict) -> bool:
+LISTING_CATEGORY_KEYS = ("private", "platinum", "boost", "solo", "commercial")
+
+
+def _looks_like_listing(item: object) -> bool:
     return isinstance(item, dict) and bool(
         item.get("id") or item.get("orderId") or item.get("order_id")
     )
 
 
-def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
-    """Recursively search for a list of listing dicts.
+def _extract_from_react_query_data(data: dict) -> list[dict]:
+    """Extract listings from a React Query data payload.
 
-    Handles:
-    - Plain feed_items / feedItems / items keys
-    - React Query dehydrated state: queries[].state.data.feed_items
+    Yad2 stores listings under category keys:
+    private / platinum / boost / solo / commercial
     """
+    all_items: list[dict] = []
+    for key in LISTING_CATEGORY_KEYS:
+        val = data.get(key)
+        if isinstance(val, list):
+            listings = [i for i in val if _looks_like_listing(i)]
+            if listings:
+                logger.info("Found %d items under key '%s'", len(listings), key)
+                all_items.extend(listings)
+    return all_items
+
+
+def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
+    """Recursively search for listing dicts in Next.js / React Query data."""
     if depth > 12:
         return []
     if isinstance(obj, dict):
         # React Query dehydrated state
         if "queries" in obj:
-            queries = obj["queries"]
-            if isinstance(queries, list):
-                for q in queries:
-                    data = (q.get("state") or {}).get("data") or {}
-                    logger.info(
-                        "React Query entry keys: %s",
-                        list(data.keys()) if isinstance(data, dict) else type(data).__name__,
-                    )
-                    found = _find_feed_items(data, depth + 1)
-                    if found:
-                        return found
+            for q in (obj["queries"] or []):
+                data = (q.get("state") or {}).get("data") or {}
+                if not isinstance(data, dict):
+                    continue
+                logger.info("React Query data keys: %s", list(data.keys()))
+                items = _extract_from_react_query_data(data)
+                if items:
+                    return items
+                # fall through to generic search on data
+                found = _find_feed_items(data, depth + 1)
+                if found:
+                    return found
 
-        for key in ("feed_items", "feedItems", "items", "data", "feed", "results"):
+        for key in ("feed_items", "feedItems", "items", "feed", "results"):
             val = obj.get(key)
             if isinstance(val, list) and val and _looks_like_listing(val[0]):
                 return val
-            if isinstance(val, dict):
-                found = _find_feed_items(val, depth + 1)
-                if found:
-                    return found
 
         for v in obj.values():
             if isinstance(v, (dict, list)):
@@ -164,7 +189,6 @@ def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
                     return found
 
     elif isinstance(obj, list):
-        # Maybe the list itself is the listings
         if obj and _looks_like_listing(obj[0]):
             return obj
         for item in obj:
