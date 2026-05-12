@@ -171,6 +171,18 @@ def scrape_listings(search_url: str) -> list[Listing]:
         logger.error("Could not extract __NEXT_DATA__: %s | HTML snippet: %s", e, html[:300])
         raise
 
+    # Debug: log top-level structure so we can find where listings live
+    def _log_keys(obj, prefix="", max_depth=4):
+        if max_depth == 0 or not isinstance(obj, dict):
+            return
+        for k, v in obj.items():
+            t = type(v).__name__
+            hint = f" (len={len(v)})" if isinstance(v, (list, dict)) else ""
+            logger.info("NEXT_DATA %s%s: %s%s", prefix, k, t, hint)
+            _log_keys(v, prefix + k + ".", max_depth - 1)
+
+    _log_keys(next_data)
+
     feed_items = _find_feed_items(next_data)
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
 
