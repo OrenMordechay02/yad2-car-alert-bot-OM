@@ -123,8 +123,8 @@ def _parse_listing(item: dict) -> Listing | None:
     )
 
     # token is the URL-visible slug; orderId is the numeric ID used as DB key
-    slug = item.get("token") or item.get("link") or item.get("adNumber") or listing_id
-    url = f"https://www.yad2.co.il/vehicles/private-cars/{slug}"
+    token = item.get("token") or listing_id
+    url = f"https://www.yad2.co.il/item/{token}"
 
     return Listing(
         id=listing_id, title=title, price=price,
@@ -132,7 +132,7 @@ def _parse_listing(item: dict) -> Listing | None:
     )
 
 
-LISTING_CATEGORY_KEYS = ("private", "platinum", "boost", "solo", "commercial")
+LISTING_CATEGORY_KEYS = ("private", "platinum", "boost", "solo")
 
 
 def _looks_like_listing(item: object) -> bool:
@@ -232,11 +232,6 @@ def scrape_listings(search_url: str) -> list[Listing]:
     feed_items = _find_feed_items(next_data)
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
 
-    if feed_items:
-        s = feed_items[0]
-        logger.info("Sample item: token=%s orderId=%s adType=%s address=%s metaData=%s",
-                    s.get("token"), s.get("orderId"), s.get("adType"),
-                    str(s.get("address"))[:120], str(s.get("metaData"))[:200])
 
     listings = []
     for item in feed_items:
