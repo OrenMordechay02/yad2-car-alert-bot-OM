@@ -199,42 +199,61 @@ def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
     return []
 
 
-def scrape_listings(search_url: str) -> list[Listing]:
-    params = _search_url_to_params(search_url)
-    logger.info("Fetching Yad2 search page with params: %s", params)
+MAX_PAGES = 15  # safety cap — avoids infinite loops
 
+
+def _fetch_page(params: dict) -> list[dict]:
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
         response = client.get(SEARCH_BASE, params=params)
 
-    logger.info(
-        "Page response: %s | content-type: %s | url: %s",
-        response.status_code,
-        response.headers.get("content-type", "?"),
-        str(response.url)[:100],
-    )
-
     if "perfdrive.com" in str(response.url) or "validate." in str(response.url):
-        raise BotProtectionError(f"Bot protection triggered — redirected to {response.url}")
+        raise BotProtectionError(f"Bot protection triggered — {response.url}")
 
     if response.status_code != 200:
-        logger.error("Unexpected status %s: %s", response.status_code, response.text[:200])
+        logger.error("Unexpected status %s for page %s", response.status_code, params.get("page", 1))
         response.raise_for_status()
 
-    html = response.text
-    logger.info("Page HTML size: %d bytes", len(html))
-
     try:
-        next_data = _extract_next_data(html)
-    except ValueError as e:
-        logger.error("Could not extract __NEXT_DATA__: %s | HTML snippet: %s", e, html[:300])
-        raise
+        next_data = _extract_next_data(response.text)
+    except ValueError:
+        logger.warning("No __NEXT_DATA__ on page %s — stopping pagination", params.get("page", 1))
+        return []
 
-    feed_items = _find_feed_items(next_data)
-    logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
+    return _find_feed_items(next_data)
 
+
+def scrape_listings(search_url: str) -> list[Listing]:
+    base_params = _search_url_to_params(search_url)
+    logger.info("Scraping Yad2 with params: %s", base_params)
+
+    all_items: list[dict] = []
+    seen_ids: set[str] = set()
+
+    for page in range(1, MAX_PAGES + 1):
+        params = {**base_params, "page": str(page)}
+        items = _fetch_page(params)
+        logger.info("Page %d: %d raw items", page, len(items))
+
+        if not items:
+            break
+
+        new_on_page = 0
+        for item in items:
+            item_id = str(item.get("orderId") or item.get("id") or "")
+            if item_id and item_id not in seen_ids:
+                seen_ids.add(item_id)
+                all_items.append(item)
+                new_on_page += 1
+
+        # Stop when a page returns only duplicates or very few items
+        if new_on_page == 0:
+            logger.info("Page %d returned only duplicates — stopping", page)
+            break
+
+    logger.info("Total raw items across all pages: %d", len(all_items))
 
     listings = []
-    for item in feed_items:
+    for item in all_items:
         if not isinstance(item, dict):
             continue
         try:
@@ -242,7 +261,7 @@ def scrape_listings(search_url: str) -> list[Listing]:
             if listing:
                 listings.append(listing)
         except Exception:
-            logger.exception("Failed to parse listing: %s", item.get("id"))
+            logger.exception("Failed to parse listing: %s", item.get("orderId"))
 
-    logger.info("Scraped %d listings", len(listings))
+    logger.info("Scraped %d listings total", len(listings))
     return listings
