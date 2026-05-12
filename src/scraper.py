@@ -233,7 +233,10 @@ def scrape_listings(search_url: str) -> list[Listing]:
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
 
     if feed_items:
-        logger.info("All keys of sample listing: %s", list(feed_items[0].keys()))
+        s = feed_items[0]
+        logger.info("Sample item: token=%s orderId=%s adType=%s address=%s metaData=%s",
+                    s.get("token"), s.get("orderId"), s.get("adType"),
+                    str(s.get("address"))[:120], str(s.get("metaData"))[:200])
 
     listings = []
     for item in feed_items:
