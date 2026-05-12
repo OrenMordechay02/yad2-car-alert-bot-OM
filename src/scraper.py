@@ -118,22 +118,55 @@ def _parse_listing(item: dict) -> Listing | None:
     )
 
 
+def _looks_like_listing(item: dict) -> bool:
+    return isinstance(item, dict) and bool(
+        item.get("id") or item.get("orderId") or item.get("order_id")
+    )
+
+
 def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
-    """Recursively search the Next.js data tree for a feed_items / feedItems list."""
-    if depth > 10:
+    """Recursively search for a list of listing dicts.
+
+    Handles:
+    - Plain feed_items / feedItems / items keys
+    - React Query dehydrated state: queries[].state.data.feed_items
+    """
+    if depth > 12:
         return []
     if isinstance(obj, dict):
-        for key in ("feed_items", "feedItems", "items"):
+        # React Query dehydrated state
+        if "queries" in obj:
+            queries = obj["queries"]
+            if isinstance(queries, list):
+                for q in queries:
+                    data = (q.get("state") or {}).get("data") or {}
+                    logger.info(
+                        "React Query entry keys: %s",
+                        list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+                    )
+                    found = _find_feed_items(data, depth + 1)
+                    if found:
+                        return found
+
+        for key in ("feed_items", "feedItems", "items", "data", "feed", "results"):
             val = obj.get(key)
-            if isinstance(val, list) and val and isinstance(val[0], dict) and (
-                "id" in val[0] or "orderId" in val[0]
-            ):
+            if isinstance(val, list) and val and _looks_like_listing(val[0]):
                 return val
+            if isinstance(val, dict):
+                found = _find_feed_items(val, depth + 1)
+                if found:
+                    return found
+
         for v in obj.values():
-            found = _find_feed_items(v, depth + 1)
-            if found:
-                return found
+            if isinstance(v, (dict, list)):
+                found = _find_feed_items(v, depth + 1)
+                if found:
+                    return found
+
     elif isinstance(obj, list):
+        # Maybe the list itself is the listings
+        if obj and _looks_like_listing(obj[0]):
+            return obj
         for item in obj:
             found = _find_feed_items(item, depth + 1)
             if found:
@@ -170,18 +203,6 @@ def scrape_listings(search_url: str) -> list[Listing]:
     except ValueError as e:
         logger.error("Could not extract __NEXT_DATA__: %s | HTML snippet: %s", e, html[:300])
         raise
-
-    # Debug: log top-level structure so we can find where listings live
-    def _log_keys(obj, prefix="", max_depth=4):
-        if max_depth == 0 or not isinstance(obj, dict):
-            return
-        for k, v in obj.items():
-            t = type(v).__name__
-            hint = f" (len={len(v)})" if isinstance(v, (list, dict)) else ""
-            logger.info("NEXT_DATA %s%s: %s%s", prefix, k, t, hint)
-            _log_keys(v, prefix + k + ".", max_depth - 1)
-
-    _log_keys(next_data)
 
     feed_items = _find_feed_items(next_data)
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
