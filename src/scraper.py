@@ -122,7 +122,8 @@ def _parse_listing(item: dict) -> Listing | None:
         or item.get("city") or item.get("area")
     )
 
-    slug = item.get("link") or item.get("adNumber") or listing_id
+    # token is the URL-visible slug; orderId is the numeric ID used as DB key
+    slug = item.get("token") or item.get("link") or item.get("adNumber") or listing_id
     url = f"https://www.yad2.co.il/vehicles/private-cars/{slug}"
 
     return Listing(
@@ -230,11 +231,6 @@ def scrape_listings(search_url: str) -> list[Listing]:
 
     feed_items = _find_feed_items(next_data)
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
-
-    if feed_items:
-        sample = feed_items[0]
-        link_fields = {k: sample.get(k) for k in ("id", "orderId", "adNumber", "token", "link", "adurl", "url", "slug")}
-        logger.info("Sample listing link fields: %s", link_fields)
 
     listings = []
     for item in feed_items:
