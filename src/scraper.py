@@ -231,6 +231,11 @@ def scrape_listings(search_url: str) -> list[Listing]:
     feed_items = _find_feed_items(next_data)
     logger.info("Found %d raw feed items in __NEXT_DATA__", len(feed_items))
 
+    if feed_items:
+        sample = feed_items[0]
+        link_fields = {k: sample.get(k) for k in ("id", "orderId", "adNumber", "token", "link", "adurl", "url", "slug")}
+        logger.info("Sample listing link fields: %s", link_fields)
+
     listings = []
     for item in feed_items:
         if not isinstance(item, dict):
