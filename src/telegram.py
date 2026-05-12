@@ -1,6 +1,7 @@
 """Telegram notification sender."""
 
 import logging
+import time
 
 import httpx
 
@@ -9,6 +10,7 @@ from src.scraper import Listing
 logger = logging.getLogger(__name__)
 
 SEND_URL = "https://api.telegram.org/bot{token}/sendMessage"
+INTER_MESSAGE_DELAY = 0.35  # seconds — stays under Telegram's 30 msg/sec limit
 
 
 def _format_message(listing: Listing) -> str:
@@ -46,6 +48,12 @@ def send_listings(bot_token: str, chat_id: str, listings: list[Listing]) -> None
                 "disable_web_page_preview": False,
             }
             response = client.post(url, json=payload)
+            if response.status_code == 429:
+                retry_after = response.json().get("parameters", {}).get("retry_after", 5)
+                logger.warning("Telegram rate limit — sleeping %ss", retry_after)
+                time.sleep(retry_after)
+                response = client.post(url, json=payload)
+
             if response.status_code != 200:
                 logger.error(
                     "Telegram error for listing %s: %s %s",
@@ -55,3 +63,5 @@ def send_listings(bot_token: str, chat_id: str, listings: list[Listing]) -> None
                 )
             else:
                 logger.info("Sent listing %s to Telegram", listing.id)
+
+            time.sleep(INTER_MESSAGE_DELAY)
