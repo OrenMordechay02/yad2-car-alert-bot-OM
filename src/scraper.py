@@ -100,7 +100,16 @@ def _str(val: object) -> str:
     return str(val)
 
 
+_logged_sample = False
+
+
 def _parse_listing(item: dict) -> Listing | None:
+    global _logged_sample
+    if not _logged_sample:
+        logger.info("SAMPLE item keys: %s", list(item.keys()))
+        logger.info("SAMPLE item values: %s", {k: item[k] for k in list(item.keys())[:30]})
+        _logged_sample = True
+
     listing_id = str(item.get("id") or item.get("orderId") or item.get("order_id") or "")
     if not listing_id:
         return None
