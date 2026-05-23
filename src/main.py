@@ -17,15 +17,21 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    logger.info("Starting Yad2 car alert check")
+    logger.info("Starting Yad2 car alert check (%d search URLs)", len(cfg.YAD2_SEARCH_URLS))
 
-    listings = scrape_listings(cfg.YAD2_SEARCH_URL)
-    if not listings:
+    db = get_client(cfg.SUPABASE_URL, cfg.SUPABASE_KEY)
+
+    all_listings = []
+    for url in cfg.YAD2_SEARCH_URLS:
+        listings = scrape_listings(url)
+        logger.info("URL %s → %d listings", url[:60], len(listings))
+        all_listings.extend(listings)
+
+    if not all_listings:
         logger.info("No listings returned from scraper – nothing to do")
         return
 
-    db = get_client(cfg.SUPABASE_URL, cfg.SUPABASE_KEY)
-    new_listings = filter_new(db, listings)
+    new_listings = filter_new(db, all_listings)
 
     if new_listings:
         save_listings(db, new_listings)
