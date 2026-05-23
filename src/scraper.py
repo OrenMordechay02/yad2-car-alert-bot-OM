@@ -100,16 +100,7 @@ def _str(val: object) -> str:
     return str(val)
 
 
-_logged_sample = False
-
-
 def _parse_listing(item: dict) -> Listing | None:
-    global _logged_sample
-    if not _logged_sample:
-        logger.info("SAMPLE item keys: %s", list(item.keys()))
-        logger.info("SAMPLE item values: %s", {k: item[k] for k in list(item.keys())[:30]})
-        _logged_sample = True
-
     listing_id = str(item.get("id") or item.get("orderId") or item.get("order_id") or "")
     if not listing_id:
         return None
@@ -122,7 +113,11 @@ def _parse_listing(item: dict) -> Listing | None:
     title = " ".join(p for p in title_parts if p).strip() or _str(item.get("title"))
 
     price = _str(item.get("price") or item.get("price_n") or item.get("priceOnly"))
-    year = _str(item.get("year") or item.get("manufactureYear"))
+    vehicle_dates = item.get("vehicleDates") or {}
+    year = _str(
+        item.get("year") or item.get("manufactureYear")
+        or (vehicle_dates.get("yearOfProduction") if isinstance(vehicle_dates, dict) else None)
+    )
     km = _str(item.get("km") or item.get("kilometers"))
     hand = _str(item.get("hand") or item.get("handNum"))
     location = _str(
@@ -206,6 +201,48 @@ def _find_feed_items(obj: object, depth: int = 0) -> list[dict]:
             if found:
                 return found
     return []
+
+
+def _extract_km(obj: object, depth: int = 0) -> str:
+    if depth > 10:
+        return ""
+    if isinstance(obj, dict):
+        for key in ("km", "kilometers", "mileage", "odometer"):
+            val = obj.get(key)
+            if val is not None:
+                if isinstance(val, (int, float)) and int(val) > 0:
+                    return str(int(val))
+                if isinstance(val, str) and val.strip() and val not in ("0", ""):
+                    return val.strip()
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                result = _extract_km(v, depth + 1)
+                if result:
+                    return result
+    elif isinstance(obj, list):
+        for item in obj:
+            result = _extract_km(item, depth + 1)
+            if result:
+                return result
+    return ""
+
+
+def fetch_km(token: str) -> str:
+    """Fetch km from the individual listing detail page."""
+    url = f"https://www.yad2.co.il/item/{token}"
+    try:
+        with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+            response = client.get(url)
+        if response.status_code != 200:
+            return ""
+        if "perfdrive.com" in str(response.url) or "validate." in str(response.url):
+            logger.warning("Bot protection on detail page for token %s", token)
+            return ""
+        next_data = _extract_next_data(response.text)
+        return _extract_km(next_data)
+    except Exception:
+        logger.debug("Failed to fetch km for token %s", token)
+        return ""
 
 
 MAX_PAGES = 15  # safety cap — avoids infinite loops

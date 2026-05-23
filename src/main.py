@@ -4,9 +4,10 @@ import logging
 import sys
 
 import src.config as cfg
-from src.scraper import scrape_listings
+from src.scraper import scrape_listings, fetch_km
 from src.db import get_client, filter_new, save_listings
 from src.telegram import send_listings
+from dataclasses import replace
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,6 +35,16 @@ def main() -> None:
     new_listings = filter_new(db, all_listings)
 
     if new_listings:
+        enriched = []
+        for listing in new_listings:
+            if not listing.km:
+                token = listing.url.rsplit("/", 1)[-1]
+                km = fetch_km(token)
+                if km:
+                    logger.info("Fetched km=%s for listing %s", km, listing.id)
+                    listing = replace(listing, km=km)
+            enriched.append(listing)
+        new_listings = enriched
         save_listings(db, new_listings)
         send_listings(cfg.TELEGRAM_BOT_TOKEN, cfg.TELEGRAM_CHAT_ID, new_listings)
     else:
