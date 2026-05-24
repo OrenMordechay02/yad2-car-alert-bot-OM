@@ -277,7 +277,11 @@ def scrape_listings(search_url: str) -> list[Listing]:
 
     for page in range(1, MAX_PAGES + 1):
         params = {**base_params, "page": str(page)}
-        items = _fetch_page(params)
+        try:
+            items = _fetch_page(params)
+        except BotProtectionError as e:
+            logger.warning("Bot protection on page %d — skipping URL: %s", page, e)
+            break
         logger.info("Page %d: %d raw items", page, len(items))
 
         if not items:
