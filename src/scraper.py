@@ -17,6 +17,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 SEARCH_BASE = "https://www.yad2.co.il/vehicles/cars"
+GW_BASE = "https://gw.yad2.co.il/feed-search-legacy/vehicles/cars"
 
 HEADERS = {
     "User-Agent": (
@@ -35,6 +36,16 @@ HEADERS = {
     "Sec-Fetch-Site": "none",
     "Upgrade-Insecure-Requests": "1",
     "Connection": "keep-alive",
+}
+
+GW_HEADERS = {
+    **HEADERS,
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.yad2.co.il/vehicles/cars",
+    "Origin": "https://www.yad2.co.il",
+    "Sec-Fetch-Site": "same-site",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Dest": "empty",
 }
 
 
@@ -248,7 +259,35 @@ def fetch_km(token: str) -> str:
 MAX_PAGES = 15  # safety cap — avoids infinite loops
 
 
+def _fetch_page_gw(params: dict) -> list[dict] | None:
+    """Try the yad2 gateway JSON API. Returns None if unavailable."""
+    try:
+        with httpx.Client(headers=GW_HEADERS, timeout=30, follow_redirects=True) as client:
+            response = client.get(GW_BASE, params=params)
+        if "perfdrive.com" in str(response.url) or "validate." in str(response.url):
+            logger.warning("Bot protection on GW API page %s", params.get("page", 1))
+            return None
+        if response.status_code != 200:
+            logger.warning("GW API status %s on page %s", response.status_code, params.get("page", 1))
+            return None
+        data = response.json()
+        items = _find_feed_items(data)
+        if items:
+            logger.info("GW API returned %d items on page %s", len(items), params.get("page", 1))
+        return items
+    except Exception as exc:
+        logger.warning("GW API failed on page %s: %s", params.get("page", 1), exc)
+        return None
+
+
 def _fetch_page(params: dict) -> list[dict]:
+    # Try gateway API first (JSON, less bot-protected)
+    gw_items = _fetch_page_gw(params)
+    if gw_items is not None:
+        return gw_items
+
+    # Fall back to HTML + __NEXT_DATA__ scraping
+    logger.info("Falling back to HTML scraping on page %s", params.get("page", 1))
     with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
         response = client.get(SEARCH_BASE, params=params)
 
