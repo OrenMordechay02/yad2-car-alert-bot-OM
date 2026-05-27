@@ -9,10 +9,11 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from html.parser import HTMLParser
 
 import httpx
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
 
@@ -280,31 +281,42 @@ def _fetch_page_gw(params: dict) -> list[dict] | None:
         return None
 
 
-def _fetch_page(params: dict) -> list[dict]:
-    # Try gateway API first (JSON, less bot-protected)
-    gw_items = _fetch_page_gw(params)
-    if gw_items is not None:
-        return gw_items
-
-    # Fall back to HTML + __NEXT_DATA__ scraping
-    logger.info("Falling back to HTML scraping on page %s", params.get("page", 1))
-    with httpx.Client(headers=HEADERS, timeout=30, follow_redirects=True) as client:
-        response = client.get(SEARCH_BASE, params=params)
-
-    if "perfdrive.com" in str(response.url) or "validate." in str(response.url):
-        raise BotProtectionError(f"Bot protection triggered — {response.url}")
-
-    if response.status_code != 200:
-        logger.error("Unexpected status %s for page %s", response.status_code, params.get("page", 1))
-        response.raise_for_status()
-
+def _fetch_page_playwright(params: dict) -> list[dict]:
+    """Fetch a page using Playwright (real Chromium) to bypass bot protection."""
+    url = SEARCH_BASE + "?" + urlencode(params)
+    logger.info("Fetching via Playwright: page %s", params.get("page", 1))
     try:
-        next_data = _extract_next_data(response.text)
-    except ValueError:
-        logger.warning("No __NEXT_DATA__ on page %s — stopping pagination", params.get("page", 1))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=HEADERS["User-Agent"],
+                locale="he-IL",
+                extra_http_headers={"Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"},
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=45_000)
+            content = page.content()
+            browser.close()
+        next_data = _extract_next_data(content)
+        items = _find_feed_items(next_data)
+        logger.info("Playwright: %d items on page %s", len(items), params.get("page", 1))
+        return items
+    except PlaywrightTimeout:
+        logger.warning("Playwright timeout on page %s", params.get("page", 1))
+        return []
+    except Exception as exc:
+        logger.warning("Playwright failed on page %s: %s", params.get("page", 1), exc)
         return []
 
-    return _find_feed_items(next_data)
+
+def _fetch_page(params: dict) -> list[dict]:
+    # Try gateway API first (JSON, no bot protection)
+    gw_items = _fetch_page_gw(params)
+    if gw_items:
+        return gw_items
+
+    # Fall back to Playwright (real Chrome, bypasses JS bot challenges)
+    return _fetch_page_playwright(params)
 
 
 def scrape_listings(search_url: str) -> list[Listing]:
