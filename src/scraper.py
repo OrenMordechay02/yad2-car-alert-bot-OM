@@ -287,14 +287,34 @@ def _fetch_page_playwright(params: dict) -> list[dict]:
     logger.info("Fetching via Playwright: page %s", params.get("page", 1))
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
             context = browser.new_context(
                 user_agent=HEADERS["User-Agent"],
                 locale="he-IL",
+                viewport={"width": 1280, "height": 800},
                 extra_http_headers={"Accept-Language": "he-IL,he;q=0.9,en-US;q=0.8"},
             )
+            # Hide headless Chrome fingerprints that bot-protection detects
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1,2,3,4,5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['he-IL','he','en-US']});
+                window.chrome = { runtime: {} };
+            """)
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=45_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            # Wait for perfdrive challenge to complete and redirect back to yad2
+            try:
+                page.wait_for_selector("#__NEXT_DATA__", timeout=20_000)
+            except PlaywrightTimeout:
+                pass  # log below will show what page we're on
             final_url = page.url
             title = page.title()
             content = page.content()
