@@ -295,8 +295,12 @@ def _fetch_page_playwright(params: dict) -> list[dict]:
             )
             page = context.new_page()
             page.goto(url, wait_until="networkidle", timeout=45_000)
+            final_url = page.url
+            title = page.title()
             content = page.content()
             browser.close()
+        logger.info("Playwright landed on: %s | title: %s | content-len: %d",
+                    final_url, title, len(content))
         next_data = _extract_next_data(content)
         items = _find_feed_items(next_data)
         logger.info("Playwright: %d items on page %s", len(items), params.get("page", 1))
